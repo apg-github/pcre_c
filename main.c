@@ -30,18 +30,18 @@ int main(int argc, char *argv[]) {
                             "No chance of a match...",
                             NULL};
 
-  for (i=0 ;i < (sizeof (testFiles) /sizeof (testFiles[0]));i++) {
+  //for (i=0 ;i < (sizeof (testFiles) /sizeof (testFiles[0]));i++) {
 
     file2 = fopen(testFiles[i], "r"); 
 
     while(fgets(buffer, bufferLength, file2)) {
     printf("%s\n", buffer);
     // tutaj powinnismy pushować do testStrings każdą linijkę
-    // a następnie odpalać dalszy kod z pcre i regexami
-    // na koncu  czyscimy zmienne i robimy dla kolejnego elementu w testFiles
+    // a następnie odpalać dalszy kod z pcre i regexami, plus pozyskiwać nazwę pliku i numer linii
+    // na koncu  czyscimy zmienne i robimy dla kolejnego pliku w testFiles
     } 
      fclose(file2);
-    }
+   // }
 
   aStrRegex = "(.*)(hello)+";  
   printf("Regex to use: %s\n", aStrRegex);
