@@ -1,161 +1,197 @@
-#include <pcre.h>               /* PCRE lib        NONE  */
-#include <stdio.h>              /* I/O lib         C89   */
-#include <stdlib.h>             /* Standard Lib    C89   */
-#include <string.h>             /* Strings         C89   */
+#include <pcre.h>   /* PCRE lib        NONE  */
+#include <stdio.h>  /* I/O lib         C89   */
+#include <stdlib.h> /* Standard Lib    C89   */
+#include <string.h> /* Strings         C89   */
 
 /**********************************************************************************************************************************/
-int main(int argc, char *argv[]) {
-  pcre *reCompiled;
-  pcre_extra *pcreExtra;
-  int pcreExecRet;
-  int subStrVec[30];
-  const char *pcreErrorStr;
-  int pcreErrorOffset;
-  char *aStrRegex;
-  char **aLineToMatch;
-  const char *psubStrMatchStr;
-  int j;
 
-  FILE *file2; 
-  int bufferLength = 255;
-  char buffer[bufferLength];
-  int i;
+void handlePcreError(int pcreExecRet)
+{
+    switch (pcreExecRet)
+    {
+    case PCRE_ERROR_NOMATCH:
+        // printf("String did not match the pattern\n");
+        break;
+    case PCRE_ERROR_NULL:
+        printf("Something was null\n");
+        break;
+    case PCRE_ERROR_BADOPTION:
+        printf("A bad option was passed\n");
+        break;
+    case PCRE_ERROR_BADMAGIC:
+        printf("Magic number bad (compiled re corrupt?)\n");
+        break;
+    case PCRE_ERROR_UNKNOWN_NODE:
+        printf("Something kooky in the compiled re\n");
+        break;
+    case PCRE_ERROR_NOMEMORY:
+        printf("Ran out of memory\n");
+        break;
+    default:
+        printf("Unknown error\n");
+        break;
+    }
+}
 
-  char *testFiles[] = { "L_2005149PL.01002201.xml.html",
-                        "L_2007319PL.01000101.xml.html",
-                          NULL};
+pcre *compileRegex(const char *regexStr)
+{
+    const char *pcreErrorStr = NULL;
+    int pcreErrorOffset = 0;
+    pcre *reCompiled = pcre_compile(regexStr, 0, &pcreErrorStr, &pcreErrorOffset, NULL);
+    if (reCompiled == NULL)
+    {
+        printf("ERROR: Could not compile '%s': %s\n", regexStr, pcreErrorStr);
+        exit(EXIT_FAILURE);
+    }
+    return reCompiled;
+}
 
-  char *testStrings[] = { "This should match... hello",
-                            "More than one hello.. hello",
-                            "No chance of a match...",
-                            NULL};
+pcre_extra *optimizeRegex(pcre *compiledRegex)
+{
+    const char *pcreErrorStr = NULL;
+    pcre_extra *pcreExtra = pcre_study(compiledRegex, 0, &pcreErrorStr);
+    if (pcreExtra == NULL && pcreErrorStr != NULL)
+    {
+        printf("ERROR: Could not optimize regex: %s\n", pcreErrorStr);
+        exit(EXIT_FAILURE);
+    }
+    return pcreExtra;
+}
 
-  //for (i=0 ;i < (sizeof (testFiles) /sizeof (testFiles[0]));i++) {
+#define MAX_NUM_OF_MATCH 100
+#define MAX_NUM_OF_MATCH_VEC_ELEMS 300
+int main(void)
+{
+    char* files[] =
+    {
+        "htmle/L_2005149PL.01002201.xml.html",
+        "htmle/L_2007319PL.01000101.xml.html",
+        "htmle/L_2009033PL.01001001.xml.html",
+        "htmle/L_2010334PL.01000101.xml.html",  
+        "htmle/L_2011055PL.01000101.xml.html",  
+        "htmle/L_2011304PL.01006401.xml.html",  
+        "htmle/L_2013165PL.01000101.xml.html",  
+        "htmle/L_2015326PL.01000101.xml.html",
+        "htmle/TEKST_skonsolidowany_31993L0013-PL-12.12.2011.html",
+        "htmle/TEKST_skonsolidowany_31999L0044-PL-12.12.2011.html",
+        "htmle/TEKST_skonsolidowany_32002L0065-PL-13.01.2018.html",
+        "htmle/TEKST_skonsolidowany_32004R0261-PL-17.02.2005.html",
+        NULL
+    };
+    
 
-    file2 = fopen(testFiles[i], "r"); 
+    int subStrVec[MAX_NUM_OF_MATCH_VEC_ELEMS] = {0};
 
-    while(fgets(buffer, bufferLength, file2)) {
-    printf("%s\n", buffer);
-    // tutaj powinnismy pushować do testStrings każdą linijkę
-    // a następnie odpalać dalszy kod z pcre i regexami, plus pozyskiwać nazwę pliku i numer linii
-    // na koncu  czyscimy zmienne i robimy dla kolejnego pliku w testFiles
-    } 
-     fclose(file2);
-   // }
+    const char *regexStr = "([Aa]rtykuł \\d+)+|([Aa]rt\\. \\d+)+|([Pp]kt "
+                           "\\d+)+|([Pp]unkt \\d+)+|([Uu]st\\. \\d+)+|([Uu]stęp \\d+)+";
 
-  aStrRegex = "(.*)(hello)+";  
-  printf("Regex to use: %s\n", aStrRegex);
+    pcre *reCompiled = compileRegex(regexStr);
+    pcre_extra *pcreExtra = optimizeRegex(reCompiled);
+    char *lineBuffer = (char *)malloc(40960);
+    memset(lineBuffer, 0, 40960);
 
-  // First, the regex string must be compiled.
-  reCompiled = pcre_compile(aStrRegex, 0, &pcreErrorStr, &pcreErrorOffset, NULL);
+    for(int y = 0; files[y] != NULL; y++)
+    {
+        const char* fileName = files[y];
+        printf("%s\n", fileName);
+        FILE *file = fopen(fileName, "r");
+        if(!file)
+        {
+            perror("File opening failed");
+            continue;
+        }
+        
+        size_t lineNumber = 0;
+        while (fgets(lineBuffer, 40960, file) != NULL)
+        {
+            lineNumber++;
+            int lineLen = (int)strlen(lineBuffer);
+            /* Try to find the regex in aLineToMatch, and report results. */
+            int pcreExecRet = pcre_exec(reCompiled, pcreExtra, lineBuffer,
+                                        lineLen, // length of string
+                                        0,                       // Start looking at this point
+                                        PCRE_NOTEMPTY,                       // OPTIONS
+                                        subStrVec,
+                                        MAX_NUM_OF_MATCH_VEC_ELEMS); // Length of subStrVec
 
-  /* OPTIONS (second argument) (||'ed together) can be:
-       PCRE_ANCHORED       -- Like adding ^ at start of pattern.
-       PCRE_CASELESS       -- Like m//i
-       PCRE_DOLLAR_ENDONLY -- Make $ match end of string regardless of \n's
-                              No Perl equivalent.
-       PCRE_DOTALL         -- Makes . match newlins too.  Like m//s
-       PCRE_EXTENDED       -- Like m//x
-       PCRE_EXTRA          -- 
-       PCRE_MULTILINE      -- Like m//m
-       PCRE_UNGREEDY       -- Set quantifiers to be ungreedy.  Individual quantifiers
-                              may be set to be greedy if they are followed by "?".
-       PCRE_UTF8           -- Work with UTF8 strings.
-  */
+            if (pcreExecRet < 0)
+            {
+                handlePcreError(pcreExecRet);
+            }
+            else
+            {
+                if (pcreExecRet == 0)
+                {
+                    pcreExecRet = MAX_NUM_OF_MATCH;
+                }
 
-  // pcre_compile returns NULL on error, and sets pcreErrorOffset & pcreErrorStr
-  if(reCompiled == NULL) {
-    printf("ERROR: Could not compile '%s': %s\n", aStrRegex, pcreErrorStr);
-    exit(1);
-  } /* end if */
+                printf("%zu: ", lineNumber);
+                for (int i = 0; i < pcreExecRet - 1; i++)
+                {
+                    const char *psubStrMatchStr = NULL;
+                    pcre_get_substring(lineBuffer, subStrVec, pcreExecRet, i, &(psubStrMatchStr));
+                    printf("%s ", psubStrMatchStr);
+                    pcre_free_substring(psubStrMatchStr);
+                }
 
-  // Optimize the regex
-  pcreExtra = pcre_study(reCompiled, 0, &pcreErrorStr);
+                for(;;)
+                {
+                    int options = 0;
+                    int startOffset = subStrVec[1];
+                    if(subStrVec[0] == subStrVec[1])
+                    {
+                        if(subStrVec[0] == lineLen) break;
+                        options = PCRE_NOTEMPTY_ATSTART | PCRE_ANCHORED;
+                    }
+                    pcreExecRet = pcre_exec(reCompiled, pcreExtra, lineBuffer,
+                                        lineLen, // length of string
+                                        startOffset,                       // Start looking at this point
+                                        PCRE_NOTEMPTY | options,                       // OPTIONS
+                                        subStrVec,
+                                        MAX_NUM_OF_MATCH_VEC_ELEMS); // Length of subStrVec
+                    if(pcreExecRet == PCRE_ERROR_NOMATCH)
+                    {
+                        break;
+                    }
+                    if(pcreExecRet == 0)
+                    {
+                        pcreExecRet = MAX_NUM_OF_MATCH;
+                    }
+                    if(pcreExecRet < 0)
+                    {
+                        handlePcreError(pcreExecRet);
+                        break;
+                    }
+                    for(int i = 0; i < pcreExecRet -1; i++)
+                    {
+                        const char *psubStrMatchStr = NULL;
+                        pcre_get_substring(lineBuffer, subStrVec, pcreExecRet, i, &(psubStrMatchStr));
+                        printf("%s ", psubStrMatchStr);
+                        pcre_free_substring(psubStrMatchStr);
+                    }
+                }
+                printf("\n");
+            }
+        }
 
-  /* pcre_study() returns NULL for both errors and when it can not optimize the regex.  The last argument is how one checks for
-     errors (it is NULL if everything works, and points to an error string otherwise. */
-  if(pcreErrorStr != NULL) {
-    printf("ERROR: Could not study '%s': %s\n", aStrRegex, pcreErrorStr);
-    exit(1);
-  } /* end if */
+        if (!feof(file))
+        {
+            perror("Problem while reading input file");
+        }
+        printf("\n");
+        fclose(file);
+    }
 
-  for(aLineToMatch=testStrings; *aLineToMatch != NULL; aLineToMatch++) {
-    printf("String: %s\n", *aLineToMatch);
-    printf("        %s\n", "0123456789012345678901234567890123456789");
-    printf("        %s\n", "0         1         2         3");
-
-    /* Try to find the regex in aLineToMatch, and report results. */
-    pcreExecRet = pcre_exec(reCompiled,
-                            pcreExtra,
-                            *aLineToMatch, 
-                            strlen(*aLineToMatch),  // length of string
-                            0,                      // Start looking at this point
-                            0,                      // OPTIONS
-                            subStrVec,
-                            30);                    // Length of subStrVec
-
-    /* pcre_exec OPTIONS (||'ed together) can be:
-       PCRE_ANCHORED -- can be turned on at this time.
-       PCRE_NOTBOL
-       PCRE_NOTEOL
-       PCRE_NOTEMPTY */
-
-    // Report what happened in the pcre_exec call..
-    //printf("pcre_exec return: %d\n", pcreExecRet);
-    if(pcreExecRet < 0) { // Something bad happened..
-      switch(pcreExecRet) {
-      case PCRE_ERROR_NOMATCH      : printf("String did not match the pattern\n");        break;
-      case PCRE_ERROR_NULL         : printf("Something was null\n");                      break;
-      case PCRE_ERROR_BADOPTION    : printf("A bad option was passed\n");                 break;
-      case PCRE_ERROR_BADMAGIC     : printf("Magic number bad (compiled re corrupt?)\n"); break;
-      case PCRE_ERROR_UNKNOWN_NODE : printf("Something kooky in the compiled re\n");      break;
-      case PCRE_ERROR_NOMEMORY     : printf("Ran out of memory\n");                       break;
-      default                      : printf("Unknown error\n");                           break;
-      } /* end switch */
-    } else {
-      printf("Result: We have a match!\n");
-
-      // At this point, rc contains the number of substring matches found...
-      if(pcreExecRet == 0) {
-        printf("But too many substrings were found to fit in subStrVec!\n");
-        // Set rc to the max number of substring matches possible.
-        pcreExecRet = 30 / 3;
-      } /* end if */
-
-      // Do it yourself way to get the first substring match (whole pattern):
-      // char subStrMatchStr[1024];
-      // int i, j
-      // for(j=0,i=subStrVec[0];i<subStrVec[1];i++,j++) 
-      //   subStrMatchStr[j] = (*aLineToMatch)[i];
-      // subStrMatchStr[subStrVec[1]-subStrVec[0]] = 0;
-      //printf("MATCHED SUBSTRING: '%s'\n", subStrMatchStr);
-
-      // PCRE contains a handy function to do the above for you:
-      for(j=0; j<pcreExecRet; j++) {
-        pcre_get_substring(*aLineToMatch, subStrVec, pcreExecRet, j, &(psubStrMatchStr));
-        printf("Match(%2d/%2d): (%2d,%2d): '%s'\n", j, pcreExecRet-1, subStrVec[j*2], subStrVec[j*2+1], psubStrMatchStr);
-      } /* end for */
-
-      // Free up the substring
-      pcre_free_substring(psubStrMatchStr);
-    }  /* end if/else */
-    printf("\n");
-
-  } /* end for */
-
-  // Free up the regular expression.
-  pcre_free(reCompiled);
-
-  // Free up the EXTRA PCRE value (may be NULL at this point)
-  if(pcreExtra != NULL) {
+    pcre_free(reCompiled);
+    if (pcreExtra != NULL)
+    {
 #ifdef PCRE_CONFIG_JIT
-    pcre_free_study(pcreExtra);
+        pcre_free_study(pcreExtra);
 #else
-    pcre_free(pcreExtra);
+        pcre_free(pcreExtra);
 #endif
-  }
+    }
+    free(lineBuffer);
 
-  // We are all done..
-  return 0;
-
-} /* end func main */
+    exit(EXIT_SUCCESS);
+}
